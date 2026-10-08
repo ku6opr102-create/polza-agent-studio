@@ -25,10 +25,25 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Clean npm cache
+        shell: powershell
+        run: |
+          npm cache clean --force
+
       - name: Install frontend dependencies
         shell: powershell
         run: |
-          npm install --no-audit --no-fund
+          npm install --include=optional --no-audit --no-fund
+
+      - name: Repair Rollup Windows optional dependency
+        shell: powershell
+        run: |
+          npm install @rollup/rollup-win32-x64-msvc --no-save --no-audit --no-fund
+
+      - name: Verify Rollup Windows dependency
+        shell: powershell
+        run: |
+          node -e "require.resolve('@rollup/rollup-win32-x64-msvc'); console.log('Rollup Windows native package: PASS')"
 
       - name: TypeScript check
         shell: powershell
