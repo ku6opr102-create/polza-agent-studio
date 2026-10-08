@@ -1,0 +1,129 @@
+name: Build Polza Agent Studio for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-windows:
+    name: Windows x64 Build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        shell: powershell
+        run: |
+          if (Test-Path package-lock.json) {
+            npm ci
+          } else {
+            npm install
+          }
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri Windows application
+        run: npm run tauri -- build
+
+      - name: Verify Windows installer
+        shell: powershell
+        run: |
+          $installerDir = "src-tauri\target\release\bundle\nsis"
+
+          if (!(Test-Path $installerDir)) {
+            Write-Error "NSIS installer directory was not created."
+            exit 1
+          }
+
+          $installers = Get-ChildItem $installerDir -Filter *.exe -File
+
+          if ($installers.Count -eq 0) {
+            Write-Error "No Windows installer EXE was created."
+            exit 1
+          }
+
+          foreach ($installer in $installers) {
+            Write-Host "Found installer: $($installer.FullName)"
+            Write-Host "Size: $($installer.Length) bytes"
+
+            if ($installer.Length -le 0) {
+              Write-Error "Installer has invalid size."
+              exit 1
+            }
+
+            $hash = Get-FileHash $installer.FullName -Algorithm SHA256
+            Write-Host "SHA256: $($hash.Hash)"
+          }
+
+      - name: Verify EXE is a Windows PE file
+        shell: powershell
+        run: |
+          $installers = Get-ChildItem "src-tauri\target\release\bundle\nsis" -Filter *.exe -File
+
+          foreach ($installer in $installers) {
+            $bytes = [System.IO.File]::ReadAllBytes($installer.FullName)
+
+            if ($bytes.Length -lt 2) {
+              Write-Error "EXE is too small."
+              exit 1
+            }
+
+            if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+              Write-Error "$($installer.Name) is not a valid Windows PE/MZ executable."
+              exit 1
+            }
+
+            Write-Host "$($installer.Name): valid Windows MZ executable."
+          }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Polza-Agent-Studio-Windows-Installer
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Upload portable executable if available
+        uses: actions/upload-artifact@v4
+        with:
+          name: Polza-Agent-Studio-Windows-Portable
+          path: src-tauri/target/release/*.exe
+          if-no-files-found: ignore
+
+      - name: Build summary
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "POLZA AGENT STUDIO WINDOWS BUILD SUCCESS"
+          Write-Host "=========================================="
+          Write-Host ""
+
+          Get-ChildItem "src-tauri\target\release\bundle\nsis" -Filter *.exe -File |
+            ForEach-Object {
+              Write-Host "Installer: $($_.FullName)"
+              Write-Host "Size: $($_.Length) bytes"
+              Write-Host "SHA256: $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)"
+            }
